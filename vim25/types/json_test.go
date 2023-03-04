@@ -1,177 +1,84 @@
-/*
-Copyright (c) 2022-2022 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2022 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
 package types
 
 import (
 	"bytes"
-	"fmt"
 	"os"
-	"strings"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-
-	"github.com/vmware/govmomi/vim25/json"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestJSONMarshalVirtualMachineConfigSpec(t *testing.T) {
-	var w bytes.Buffer
-	enc := json.NewEncoder(&w)
-	enc.SetIndent("", "  ")
-	enc.SetDiscriminator("_typeName", "_value", "")
-
-	if err := enc.Encode(VirtualMachineConfigSpec{
-		Name: "Hello, world.",
-		DeviceChange: []BaseVirtualDeviceConfigSpec{
-			&VirtualDeviceConfigSpec{
-				Operation:     VirtualDeviceConfigSpecOperationAdd,
-				FileOperation: VirtualDeviceConfigSpecFileOperationCreate,
-				Device: &VirtualVmxnet3{
-					VirtualVmxnet: VirtualVmxnet{
-						VirtualEthernetCard: VirtualEthernetCard{
-							VirtualDevice: VirtualDevice{
-								Key: 3,
-							},
-							MacAddress: "00:11:22:33:44:55:66:88",
-						},
-					},
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	act, exp := w.String(), virtualMachineConfigSpecWithDeviceChangesJSON
-	if act != exp {
-		t.Errorf("act json != exp json\nact=%s\nexp=%s", act, exp)
-	}
+var serializationTests = []struct {
+	name   string
+	file   string
+	data   interface{}
+	goType reflect.Type
+}{
+	{
+		name:   "vminfo",
+		file:   "./testdata/vminfo.json",
+		data:   &vmInfoObjForTests,
+		goType: reflect.TypeOf(VirtualMachineConfigInfo{}),
+	},
+	{
+		name:   "retrieveResult",
+		file:   "./testdata/retrieveResult.json",
+		data:   &retrieveResultForTests,
+		goType: reflect.TypeOf(RetrieveResult{}),
+	},
 }
 
-func TestJSONUnmarshalVirtualMachineConfigSpec(t *testing.T) {
-	dec := json.NewDecoder(strings.NewReader(virtualMachineConfigSpecWithVAppConfigJSON))
-	dec.SetDiscriminator("_typeName", "_value", "", json.DiscriminatorToTypeFunc(TypeFunc()))
+func TestSerialization(t *testing.T) {
+	for _, test := range serializationTests {
+		t.Run(test.name+" Decode", func(t *testing.T) {
+			f, err := os.Open(test.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
 
-	var obj VirtualMachineConfigSpec
-	if err := dec.Decode(&obj); err != nil {
-		t.Fatal(err)
-	}
+			dec := NewGovmomiDecoder(f)
 
-	var w bytes.Buffer
-	enc := json.NewEncoder(&w)
-	enc.SetIndent("", "  ")
-	enc.SetDiscriminator("_typeName", "_value", "")
+			data := reflect.New(test.goType).Interface()
+			if err := dec.Decode(data); err != nil {
+				t.Fatal(err)
+			}
 
-	if err := enc.Encode(obj); err != nil {
-		t.Fatal(err)
-	}
+			a, e := data, test.data
 
-	act, exp := w.String(), virtualMachineConfigSpecWithVAppConfigJSON
-	if act != exp {
-		t.Errorf("act json != exp json\nact=%s\nexp=%s", act, exp)
-	}
-}
+			if diff := cmp.Diff(a, e); diff != "" {
+				t.Errorf("mismatched %v: %s", test.name, diff)
+			}
+		})
 
-func TestJSONUnmarshalVirtualMachineConfigInfo(t *testing.T) {
-	f, err := os.Open("./testdata/virtualMachineConfigInfo.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
+		t.Run(test.name+" Encode", func(t *testing.T) {
+			expJSON, err := os.ReadFile(test.file)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	dec := json.NewDecoder(f)
-	dec.SetDiscriminator("_typeName", "_value", "", json.DiscriminatorToTypeFunc(TypeFunc()))
+			var w bytes.Buffer
+			_ = w
+			enc := NewGovmomiEncoder(&w)
 
-	var obj VirtualMachineConfigInfo
-	if err := dec.Decode(&obj); err != nil {
-		t.Fatal(err)
-	}
+			if err := enc.Encode(test.data); err != nil {
+				t.Fatal(err)
+			}
 
-	if diff := cmp.Diff(obj, virtualMachineConfigInfoObjForTestData); diff != "" {
-		t.Errorf("mismatched VirtualMachineConfigInfo: %s", diff)
-		fmt.Println(diff)
+			expected, actual := string(expJSON), w.String()
+			assert.JSONEq(t, expected, actual)
+		})
 	}
 }
 
-const virtualMachineConfigSpecWithDeviceChangesJSON = `{
-  "_typeName": "VirtualMachineConfigSpec",
-  "name": "Hello, world.",
-  "deviceChange": [
-    {
-      "_typeName": "VirtualDeviceConfigSpec",
-      "operation": "add",
-      "fileOperation": "create",
-      "device": {
-        "_typeName": "VirtualVmxnet3",
-        "key": 3,
-        "macAddress": "00:11:22:33:44:55:66:88"
-      }
-    }
-  ]
-}
-`
-
-const virtualMachineConfigSpecWithVAppConfigJSON = `{
-  "_typeName": "VirtualMachineConfigSpec",
-  "name": "Hello, world.",
-  "vAppConfig": {
-    "_typeName": "VmConfigSpec",
-    "product": [
-      {
-        "_typeName": "VAppProductSpec",
-        "operation": "add",
-        "info": {
-          "_typeName": "VAppProductInfo",
-          "key": 1,
-          "name": "p1"
-        }
-      }
-    ],
-    "installBootRequired": false
-  }
-}
-`
-
-func mustParseTime(layout, value string) time.Time {
-	t, err := time.Parse(layout, value)
-	if err != nil {
-		panic(err)
-	}
-	return t
-}
-
-func addrOfMustParseTime(layout, value string) *time.Time {
-	t := mustParseTime(layout, value)
-	return &t
-}
-
-func addrOfBool(v bool) *bool {
-	return &v
-}
-
-func addrOfInt32(v int32) *int32 {
-	return &v
-}
-
-func addrOfInt64(v int64) *int64 {
-	return &v
-}
-
-var virtualMachineConfigInfoObjForTestData VirtualMachineConfigInfo = VirtualMachineConfigInfo{
+var vmInfoObjForTests = VirtualMachineConfigInfo{
 	ChangeVersion:         "2022-12-12T11:48:35.473645Z",
 	Modified:              mustParseTime(time.RFC3339, "1970-01-01T00:00:00Z"),
 	Name:                  "test",
@@ -181,11 +88,11 @@ var virtualMachineConfigInfoObjForTestData VirtualMachineConfigInfo = VirtualMac
 	CreateDate:            addrOfMustParseTime(time.RFC3339, "2022-12-12T11:47:24.685785Z"),
 	InstanceUuid:          "502cc2a5-1f06-2890-6d70-ba2c55c5c2b7",
 	NpivTemporaryDisabled: addrOfBool(true),
-	LocationId:            "",
+	LocationId:            "Earth",
 	Template:              false,
 	GuestId:               "vmwarePhoton64Guest",
 	AlternateGuestName:    "",
-	Annotation:            "",
+	Annotation:            "Hello, world.",
 	Files: VirtualMachineFileInfo{
 		VmPathName:        "[datastore1] test/test.vmx",
 		SnapshotDirectory: "[datastore1] test/",
@@ -193,7 +100,7 @@ var virtualMachineConfigInfoObjForTestData VirtualMachineConfigInfo = VirtualMac
 		LogDirectory:      "[datastore1] test/",
 	},
 	Tools: &ToolsConfigInfo{
-		ToolsVersion:            0,
+		ToolsVersion:            1,
 		AfterPowerOn:            addrOfBool(true),
 		AfterResume:             addrOfBool(true),
 		BeforeGuestStandby:      addrOfBool(true),
@@ -418,7 +325,8 @@ var virtualMachineConfigInfoObjForTestData VirtualMachineConfigInfo = VirtualMac
 					},
 					Backing: &VirtualDiskFlatVer2BackingInfo{
 						VirtualDeviceFileBackingInfo: VirtualDeviceFileBackingInfo{
-							FileName: "[datastore1] test/test.vmdk",
+							BackingObjectId: "1",
+							FileName:        "[datastore1] test/test.vmdk",
 							Datastore: &ManagedObjectReference{
 								Type:  "Datastore",
 								Value: "datastore-21",
@@ -582,6 +490,7 @@ var virtualMachineConfigInfoObjForTestData VirtualMachineConfigInfo = VirtualMac
 	BootOptions: &VirtualMachineBootOptions{
 		EnterBIOSSetup:       addrOfBool(false),
 		EfiSecureBootEnabled: addrOfBool(false),
+		BootDelay:            1,
 		BootRetryEnabled:     addrOfBool(false),
 		BootRetryDelay:       10000,
 		NetworkBootProtocol:  "ipv4",
@@ -645,4 +554,231 @@ var virtualMachineConfigInfoObjForTestData VirtualMachineConfigInfo = VirtualMac
 	},
 	Pmem:         nil,
 	DeviceGroups: &VirtualMachineVirtualDeviceGroups{},
+}
+
+var retrieveResultForTests = RetrieveResult{
+	Token: "",
+	Objects: []ObjectContent{
+
+		{
+
+			DynamicData: DynamicData{},
+			Obj: ManagedObjectReference{
+
+				Type:  "Folder",
+				Value: "group-d1",
+			},
+			PropSet: []DynamicProperty{
+				{
+
+					Name: "alarmActionsEnabled",
+					Val:  true,
+				},
+				{
+
+					Name: "availableField",
+					Val: ArrayOfCustomFieldDef{
+
+						CustomFieldDef: []CustomFieldDef{},
+					},
+				},
+
+				{
+
+					Name: "childEntity",
+					Val: ArrayOfManagedObjectReference{
+						ManagedObjectReference: []ManagedObjectReference{},
+					},
+				},
+				{
+					Name: "childType",
+					Val: ArrayOfString{
+						String: []string{
+							"Folder",
+							"Datacenter"},
+					},
+				},
+				{
+					Name: "configIssue",
+					Val: ArrayOfEvent{
+						Event: []BaseEvent{},
+					},
+				},
+				{
+					Name: "configStatus",
+					Val:  ManagedEntityStatusGray},
+				{
+					Name: "customValue",
+					Val: ArrayOfCustomFieldValue{
+						CustomFieldValue: []BaseCustomFieldValue{},
+					},
+				},
+				{
+					Name: "declaredAlarmState",
+					Val: ArrayOfAlarmState{
+						AlarmState: []AlarmState{
+							{
+								Key: "alarm-328.group-d1",
+								Entity: ManagedObjectReference{
+									Type:  "Folder",
+									Value: "group-d1"},
+								Alarm: ManagedObjectReference{
+									Type:  "Alarm",
+									Value: "alarm-328"},
+								OverallStatus: "gray",
+								Time:          time.Date(2023, time.January, 14, 8, 57, 35, 279575000, time.UTC),
+								Acknowledged:  addrOfBool(false),
+							},
+							{
+								Key: "alarm-327.group-d1",
+								Entity: ManagedObjectReference{
+									Type:  "Folder",
+									Value: "group-d1"},
+								Alarm: ManagedObjectReference{
+									Type:  "Alarm",
+									Value: "alarm-327"},
+								OverallStatus: "green",
+								Time:          time.Date(2023, time.January, 14, 8, 56, 40, 83607000, time.UTC),
+								Acknowledged:  addrOfBool(false),
+								EventKey:      756,
+							},
+							{
+								DynamicData: DynamicData{},
+								Key:         "alarm-326.group-d1",
+								Entity: ManagedObjectReference{
+									Type:  "Folder",
+									Value: "group-d1"},
+								Alarm: ManagedObjectReference{
+									Type:  "Alarm",
+									Value: "alarm-326"},
+								OverallStatus: "green",
+								Time: time.Date(2023,
+									time.January,
+									14,
+									8,
+									56,
+									35,
+									82616000,
+									time.UTC),
+								Acknowledged: addrOfBool(false),
+								EventKey:     751,
+							},
+						},
+					},
+				},
+				{
+					Name: "disabledMethod",
+					Val: ArrayOfString{
+						String: []string{},
+					},
+				},
+				{
+					Name: "effectiveRole",
+					Val: ArrayOfInt{
+						Int: []int32{-1},
+					},
+				},
+				{
+					Name: "name",
+					Val:  "Datacenters"},
+				{
+					Name: "overallStatus",
+					Val:  ManagedEntityStatusGray},
+				{
+					Name: "permission",
+					Val: ArrayOfPermission{
+						Permission: []Permission{
+							{
+								Entity: &ManagedObjectReference{
+									Value: "group-d1",
+									Type:  "Folder",
+								},
+								Principal: "VSPHERE.LOCAL\\vmware-vsm-2bd917c6-e084-4d1f-988d-a68f7525cc94",
+								Group:     false,
+								RoleId:    1034,
+								Propagate: true},
+							{
+								Entity: &ManagedObjectReference{
+									Value: "group-d1",
+									Type:  "Folder",
+								},
+								Principal: "VSPHERE.LOCAL\\topologysvc-2bd917c6-e084-4d1f-988d-a68f7525cc94",
+								Group:     false,
+								RoleId:    1024,
+								Propagate: true},
+							{
+								Entity: &ManagedObjectReference{
+									Value: "group-d1",
+									Type:  "Folder",
+								},
+								Principal: "VSPHERE.LOCAL\\vpxd-extension-2bd917c6-e084-4d1f-988d-a68f7525cc94",
+								Group:     false,
+								RoleId:    -1,
+								Propagate: true},
+						},
+					},
+				},
+				{
+					Name: "recentTask",
+					Val: ArrayOfManagedObjectReference{
+						ManagedObjectReference: []ManagedObjectReference{
+							{
+								Type:  "Task",
+								Value: "task-186"},
+							{
+								Type:  "Task",
+								Value: "task-187"},
+							{
+								Type:  "Task",
+								Value: "task-188"},
+						},
+					},
+				},
+				{
+					Name: "tag",
+					Val: ArrayOfTag{
+						Tag: []Tag{},
+					},
+				},
+				{
+					Name: "triggeredAlarmState",
+					Val: ArrayOfAlarmState{
+						AlarmState: []AlarmState{},
+					},
+				},
+				{
+					Name: "value",
+					Val: ArrayOfCustomFieldValue{
+						CustomFieldValue: []BaseCustomFieldValue{},
+					},
+				},
+			},
+			MissingSet: nil,
+		},
+	},
+}
+
+func mustParseTime(layout, value string) time.Time {
+	t, err := time.Parse(layout, value)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+func addrOfMustParseTime(layout, value string) *time.Time {
+	t := mustParseTime(layout, value)
+	return &t
+}
+
+func addrOfBool(v bool) *bool {
+	return &v
+}
+
+func addrOfInt32(v int32) *int32 {
+	return &v
+}
+
+func addrOfInt64(v int64) *int64 {
+	return &v
 }

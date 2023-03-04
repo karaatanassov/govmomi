@@ -87,6 +87,8 @@ type Client struct {
 
 	cookie          string
 	insecureCookies bool
+
+	useJSON bool
 }
 
 var schemeMatch = regexp.MustCompile(`^\w+://`)
@@ -237,6 +239,14 @@ func (c *Client) NewServiceClient(path string, namespace string) *Client {
 	}
 
 	return client
+}
+
+// UseJSON changes the protocol between SOAP and JSON. Starting with vCenter
+// 8.0.1 JSON over HTTP can be used. Note this method has no locking and clients
+// should be careful to not interfere with concurrent use of the client
+// instance.
+func (c *Client) UseJSON(useJSON bool) {
+	c.useJSON = useJSON
 }
 
 // SetRootCAs defines the set of PEM-encoded file locations of root certificate
@@ -433,6 +443,7 @@ func splitHostPort(host string) (string, string) {
 
 const sdkTunnel = "sdkTunnel:8089"
 
+// Certificate returns the current TLS certificate.
 func (c *Client) Certificate() *tls.Certificate {
 	certs := c.t.TLSClientConfig.Certificates
 	if len(certs) == 0 {
@@ -441,6 +452,7 @@ func (c *Client) Certificate() *tls.Certificate {
 	return &certs[0]
 }
 
+// SetCertificate st a certificate for TLS use.
 func (c *Client) SetCertificate(cert tls.Certificate) {
 	t := c.Client.Transport.(*http.Transport)
 
@@ -478,6 +490,7 @@ func (c *Client) Tunnel() *Client {
 	return tunnel
 }
 
+// URL returns the URL to which the client is configured
 func (c *Client) URL() *url.URL {
 	urlCopy := *c.u
 	return &urlCopy
@@ -488,19 +501,23 @@ type marshaledClient struct {
 	URL      *url.URL
 	Insecure bool
 	Version  string
+	UseJSON  bool
 }
 
+// MarshalJSON writes the Client configuration to JSON.
 func (c *Client) MarshalJSON() ([]byte, error) {
 	m := marshaledClient{
 		Cookies:  c.Jar.Cookies(c.u),
 		URL:      c.u,
 		Insecure: c.k,
 		Version:  c.Version,
+		UseJSON:  c.useJSON,
 	}
 
 	return json.Marshal(m)
 }
 
+// UnmarshalJSON rads Client configuration from JSON.
 func (c *Client) UnmarshalJSON(b []byte) error {
 	var m marshaledClient
 
@@ -512,6 +529,7 @@ func (c *Client) UnmarshalJSON(b []byte) error {
 	*c = *NewClient(m.URL, m.Insecure)
 	c.Version = m.Version
 	c.Jar.SetCookies(m.URL, m.Cookies)
+	c.useJSON = m.UseJSON
 
 	return nil
 }
@@ -528,6 +546,9 @@ func (c *Client) setInsecureCookies(res *http.Response) {
 	}
 }
 
+// Do is equivalent to http.Client.Do and takes care of API specifics including
+// logging, user-agent header, handling cookies, measuring responsiveness of the
+// API
 func (c *Client) Do(ctx context.Context, req *http.Request, f func(*http.Response) error) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -621,7 +642,15 @@ func newStatusError(res *http.Response) error {
 	}
 }
 
+// RoundTrip executes an API request to VMOMI server.
 func (c *Client) RoundTrip(ctx context.Context, reqBody, resBody HasFault) error {
+	if !c.useJSON {
+		return c.soapRoundTrip(ctx, reqBody, resBody)
+	}
+	return c.jsonRoundTrip(ctx, reqBody, resBody)
+}
+
+func (c *Client) soapRoundTrip(ctx context.Context, reqBody, resBody HasFault) error {
 	var err error
 	var b []byte
 
