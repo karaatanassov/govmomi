@@ -298,6 +298,8 @@ func (flag *ClientFlag) ConfigureTLS(sc *soap.Client) error {
 		}
 	}
 
+	sc.UseJSON(os.Getenv("GOVC_VI_JSON") != "")
+
 	return nil
 }
 
