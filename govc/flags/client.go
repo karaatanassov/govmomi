@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014-2018 VMware, Inc. All Rights Reserved.
+Copyright (c) 2014-2018, 2023 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -297,6 +297,8 @@ func (flag *ClientFlag) ConfigureTLS(sc *soap.Client) error {
 			return err
 		}
 	}
+
+	sc.UseJSON(os.Getenv("GOVC_VI_JSON") != "")
 
 	return nil
 }
