@@ -38,6 +38,8 @@ var discriminatorTypeRegistry = map[string]reflect.Type{
 	"float":   reflect.TypeOf(float32(0)),
 	"double":  reflect.TypeOf(float64(0)),
 	"string":  reflect.TypeOf(""),
+	"binary":  reflect.TypeOf([]byte{}),
+	// "dateTime": reflect.TypeOf(time.Now()),
 }
 
 // NewJSONDecoder creates JSON decoder configured for VMOMI.
@@ -69,6 +71,8 @@ var discriminatorNamesRegistry = map[reflect.Type]string{
 	reflect.TypeOf(float32(0)): "float",
 	reflect.TypeOf(float64(0)): "double",
 	reflect.TypeOf(""):         "string",
+	reflect.TypeOf([]byte{}):   "binary",
+	// reflect.TypeOf(time.Now()): "dateTime",
 }
 
 // NewJSONEncoder creates JSON encoder configured for VMOMI.
