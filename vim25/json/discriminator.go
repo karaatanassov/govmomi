@@ -184,18 +184,27 @@ func (d *decodeState) discriminatorGetValue() (reflect.Value, error) {
 			// Assign the type instance to the outer variable, t.
 			t = ti
 
-			switch t.Kind() {
-			case reflect.Map, reflect.Struct:
-				// If the type is a map or a struct then it is not necessary to
-				// continue walking over the current JSON object since it will be
-				// completely rescanned to decode its value into the discovered
-				// type.
-				dd.opcode = scanEndObject
-			default:
-				// Otherwise if the value offset has been discovered then it is
-				// safe to stop walking over the current JSON object as well.
+			// If type implements Unmarshaler we want to deserialize the
+			// value field into value of type t.
+			if supportsUnmarshaler(t) {
+				// We will run the unmarshaler on the value
 				if valueOff > -1 {
 					dd.opcode = scanEndObject
+				}
+			} else {
+				switch t.Kind() {
+				case reflect.Map, reflect.Struct:
+					// If the type is a map or a struct then it is not necessary to
+					// continue walking over the current JSON object since it will be
+					// completely rescanned to decode its value into the discovered
+					// type.
+					dd.opcode = scanEndObject
+				default:
+					// Otherwise if the value offset has been discovered then it is
+					// safe to stop walking over the current JSON object as well.
+					if valueOff > -1 {
+						dd.opcode = scanEndObject
+					}
 				}
 			}
 		case discriminatorOpValueField:
@@ -247,17 +256,20 @@ func (d *decodeState) discriminatorGetValue() (reflect.Value, error) {
 	// Reset the decode state to prepare for decoding the data.
 	dd.scan.reset()
 
-	switch t.Kind() {
-	case reflect.Map, reflect.Struct:
-		// Set the offset to zero since the entire object will be decoded
-		// into v.
-		dd.off = 0
-	default:
-		// Set the offset to what it was before the discriminator value was
-		// read so only the discriminator value is decoded into v.
+	if supportsUnmarshaler(t) {
 		dd.off = valueOff
+	} else {
+		switch t.Kind() {
+		case reflect.Map, reflect.Struct:
+			// Set the offset to zero since the entire object will be decoded
+			// into v.
+			dd.off = 0
+		default:
+			// Set the offset to what it was before the discriminator value was
+			// read so only the discriminator value is decoded into v.
+			dd.off = valueOff
+		}
 	}
-
 	// This will initialize the correct scan step and op code.
 	dd.scanWhile(scanSkipSpace)
 
@@ -325,6 +337,24 @@ func (o encOpts) isDiscriminatorSet() bool {
 
 func discriminatorInterfaceEncode(e *encodeState, v reflect.Value, opts encOpts) {
 	v = v.Elem()
+
+	if v.Type().Implements(marshalerType) {
+		discriminatorValue := opts.discriminatorValueFn(v.Type())
+		if discriminatorValue == "" {
+			marshalerEncoder(e, v, opts)
+		}
+		e.WriteString(`{"`)
+		e.WriteString(opts.discriminatorTypeFieldName)
+		e.WriteString(`":"`)
+		e.WriteString(discriminatorValue)
+		e.WriteString(`","`)
+		e.WriteString(opts.discriminatorValueFieldName)
+		e.WriteString(`":`)
+		marshalerEncoder(e, v, opts)
+		e.WriteByte('}')
+		return
+	}
+
 	switch v.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Invalid:
 		e.error(&UnsupportedValueError{v, fmt.Sprintf("invalid kind: %s", v.Kind())})
@@ -388,6 +418,12 @@ func discriminatorStructEncode(e *encodeState, v reflect.Value, opts encOpts) by
 	e.WriteByte('"')
 	e.discriminatorEncodeTypeName = false
 	return ','
+}
+
+var unmarshalerType = reflect.TypeOf((*Unmarshaler)(nil)).Elem()
+
+func supportsUnmarshaler(t reflect.Type) bool {
+	return t.Implements(unmarshalerType) || reflect.PtrTo(t).Implements(unmarshalerType)
 }
 
 var discriminatorTypeRegistry = map[string]reflect.Type{

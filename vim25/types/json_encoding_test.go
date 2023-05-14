@@ -20,17 +20,18 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestOptionValueSerialization(t *testing.T) {
-	// tv, e := time.Parse(time.RFC3339Nano, "2022-12-12T11:48:35.473645Z")
-	// if e != nil {
-	// 	t.Log("Cannot parse test timestamp. This is coding error.")
-	// 	t.Fail()
-	// 	return
-	// }
+	tv, e := time.Parse(time.RFC3339Nano, "2022-12-12T11:48:35.473645Z")
+	if e != nil {
+		t.Log("Cannot parse test timestamp. This is coding error.")
+		t.Fail()
+		return
+	}
 	options := []struct {
 		name    string
 		wire    string
@@ -87,12 +88,12 @@ func TestOptionValueSerialization(t *testing.T) {
 				"value": {"_typeName": "string","_value": "test"}}`,
 			binding: OptionValue{Key: "option1", Value: "test"},
 		},
-		// {
-		// 	name: "dateTime", // time.Time
-		// 	wire: `{"_typeName": "OptionValue","key": "option1",
-		// 		"value": {"_typeName": "dateTime","_value": "2022-12-12T11:48:35.473645Z"}}`,
-		// 	binding: OptionValue{Key: "option1", Value: tv},
-		// },
+		{
+			name: "dateTime", // time.Time
+			wire: `{"_typeName": "OptionValue","key": "option1",
+				"value": {"_typeName": "dateTime","_value": "2022-12-12T11:48:35.473645Z"}}`,
+			binding: OptionValue{Key: "option1", Value: tv},
+		},
 		{
 			name: "binary", // []byte
 			wire: `{"_typeName": "OptionValue","key": "option1",
@@ -120,13 +121,20 @@ func TestOptionValueSerialization(t *testing.T) {
 		// prepend the "ArrayOf" prefix
 		// {
 		// 	name: "array of enum",
-		// 	wire: `{"_typeName": "OptionValue","key": "option1",
-		// 		"value": {"_typeName": "ArrayOfCustomizationNetBIOSMode","_value": ["enableNetBIOS"]}}`,
-		// 	binding: OptionValue{Key: "option1", Value: []CustomizationNetBIOSMode{CustomizationNetBIOSModeEnableNetBIOS}},
+		// 	wire: `{
+		//		"_typeName": "OptionValue",
+		//		"key": "option1",
+		// 		"value": {"_typeName": "ArrayOfCustomizationNetBIOSMode",
+		//                "_value": ["enableNetBIOS"]}}`,
+		// 	binding: OptionValue{Key: "option1",
+		//		Value: []CustomizationNetBIOSMode{
+		//			CustomizationNetBIOSModeEnableNetBIOS
+		//		}},
 		// },
 
-		// array of struct is weird. Do we want to unmarshal this as []ClusterHostRecommendation
-		// directly? Why do we want to use ArrayOfClusterHostRecommendation wrapper?
+		// array of struct is weird. Do we want to unmarshal this as
+		// []ClusterHostRecommendation directly? Why do we want to use
+		// ArrayOfClusterHostRecommendation wrapper?
 		// if SOAP does it then I guess back compat is a big reason.
 		{
 			name: "array of struct",
