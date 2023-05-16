@@ -6,7 +6,9 @@ package json_test
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -57,6 +59,58 @@ type DS7 struct {
 
 type DS8 struct {
 	F1 DS3 `json:"f1"`
+}
+
+type DS9 struct {
+	F1 int64
+}
+
+func (d DS9) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteString(strconv.FormatInt(d.F1, 10))
+	return b.Bytes(), nil
+}
+func (d *DS9) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	if s == "null" {
+		d.F1 = 0
+		return nil
+	}
+	if len(s) < 1 {
+		return fmt.Errorf("Cannot parse empty as int64")
+	}
+	v, e := strconv.ParseInt(s, 10, 64)
+	if e != nil {
+		return fmt.Errorf("Cannot parse as int64: %v; %w", s, e)
+	}
+	d.F1 = v
+	return nil
+}
+
+type HexInt64 int64
+
+func (i HexInt64) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteString(fmt.Sprintf(`"%X"`, i))
+	return b.Bytes(), nil
+}
+
+func (i *HexInt64) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	if s == "null" {
+		*i = 0
+		return nil
+	}
+	last := len(s) - 1
+	if last < 1 || s[0] != '"' || s[last] != '"' {
+		return fmt.Errorf("Cannot parse as hex int64: %v", s)
+	}
+	v, e := strconv.ParseInt(s[1:last], 16, 64)
+	if e != nil {
+		return fmt.Errorf("Cannot parse as hex int64: %v; %w", s, e)
+	}
+	*i = HexInt64(v)
+	return nil
 }
 
 func customNameWithFilter(t reflect.Type) string {
@@ -120,6 +174,11 @@ var discriminatorTests = []struct {
 
 	{obj: "hello", str: `{"_t":"string","_v":"hello"}`, mode: json.DiscriminatorEncodeTypeNameRootValue},
 	{obj: true, str: `{"_t":"bool","_v":true}`, mode: json.DiscriminatorEncodeTypeNameRootValue},
+
+	{obj: HexInt64(42), str: `{"_t":"HexInt64","_v":"2A"}`, mode: json.DiscriminatorEncodeTypeNameRootValue},
+	{obj: DS9{F1: 42}, str: `{"_t":"DS9","_v":42}`, mode: json.DiscriminatorEncodeTypeNameRootValue},
+	{obj: DS6{F1: DS9{F1: 42}}, str: `{"f1":{"_t":"DS9","_v":42}}`},
+	{obj: DS9{F1: 42}, str: `42`},
 
 	// primitive values stored in interface with 0 methods
 	{obj: DS1{F1: uint(1)}, str: `{"f1":{"_t":"uint","_v":1}}`},
@@ -341,6 +400,8 @@ func discriminatorToTypeFn(discriminator string) (reflect.Type, bool) {
 		return reflect.TypeOf(DS7{}), true
 	case "DS8":
 		return reflect.TypeOf(DS8{}), true
+	case "DS9":
+		return reflect.TypeOf(DS9{}), true
 	case "uintNoop":
 		return reflect.TypeOf(uintNoop(0)), true
 	case "uint8Noop":
@@ -377,6 +438,8 @@ func discriminatorToTypeFn(discriminator string) (reflect.Type, bool) {
 		return reflect.TypeOf(sliceIntNoop{}), true
 	case "arrayOfTwoIntsNoop":
 		return reflect.TypeOf(arrayOfTwoIntsNoop{}), true
+	case "HexInt64":
+		return reflect.TypeOf(HexInt64(0)), true
 	default:
 		return nil, false
 	}
@@ -481,6 +544,10 @@ func testDiscriminatorDecode(t *testing.T) {
 					obj = o
 				case "DS8":
 					var o DS8
+					err = dec.Decode(&o)
+					obj = o
+				case "DS9":
+					var o DS9
 					err = dec.Decode(&o)
 					obj = o
 				default:
