@@ -20,7 +20,10 @@ import (
 	"bytes"
 	"io"
 	"reflect"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/vmware/govmomi/vim25/json"
 )
@@ -43,23 +46,51 @@ var discriminatorTypeRegistry = map[string]reflect.Type{
 	"dateTime": reflect.TypeOf(time.Now()),
 }
 
+const (
+	arrayOfPrefix = "ArrayOf"
+)
+
 // NewJSONDecoder creates JSON decoder configured for VMOMI.
 func NewJSONDecoder(r io.Reader) *json.Decoder {
 	res := json.NewDecoder(r)
 	res.SetDiscriminator(
 		discriminatorMemberName,
 		primitiveValueMemberName,
-		json.DiscriminatorToTypeFunc(func(name string) (reflect.Type, bool) {
-			if res, ok := TypeFunc()(name); ok {
-				return res, true
-			}
-			if res, ok := discriminatorTypeRegistry[name]; ok {
-				return res, true
-			}
-			return nil, false
-		}),
+		json.DiscriminatorToTypeFunc(vmomiType),
 	)
 	return res
+}
+
+// vmomiType resolves a name to type by looking up in tables of user defined
+// type names, primitive names and trying to resolve types nested in arrays.
+func vmomiType(name string) (reflect.Type, bool) {
+	if dataType, ok := lookupVmomiType(name); ok {
+		return dataType, true
+	}
+
+	// Check if it is "ArrayOf" known type and return "type.SliceOf"
+	if strings.HasPrefix(name, arrayOfPrefix) && len(name) > len(arrayOfPrefix) {
+		nestedName := name[len(arrayOfPrefix):]
+		if nestedType, ok := lookupVmomiType(nestedName); ok {
+			return reflect.SliceOf(nestedType), true
+		}
+		// Try lowercase first letter for primitive types e.g. string from ArrayOfString
+		if nestedType, ok := lookupVmomiType(firstToLower(nestedName)); ok {
+			return reflect.SliceOf(nestedType), true
+		}
+	}
+	return nil, false
+}
+
+// lookupVmomiType looks up a type by name without recursing into arrays
+func lookupVmomiType(name string) (reflect.Type, bool) {
+	if res, ok := TypeFunc()(name); ok {
+		return res, true
+	}
+	if res, ok := discriminatorTypeRegistry[name]; ok {
+		return res, true
+	}
+	return nil, false
 }
 
 // VMOMI primitive names
@@ -98,6 +129,35 @@ func VmomiTypeName(t reflect.Type) (discriminator string) {
 	if name, ok := discriminatorNamesRegistry[t]; ok {
 		return name
 	}
+	// If the type is array of known type name
+	if t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+		return arrayOfPrefix + firstToUpper(VmomiTypeName(t.Elem()))
+	}
+
 	name := json.DefaultDiscriminatorFunc(t)
 	return name
+}
+
+func firstToUpper(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError && size <= 1 {
+		return s
+	}
+	lc := unicode.ToUpper(r)
+	if r == lc {
+		return s
+	}
+	return string(lc) + s[size:]
+}
+
+func firstToLower(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError && size <= 1 {
+		return s
+	}
+	lc := unicode.ToLower(r)
+	if r == lc {
+		return s
+	}
+	return string(lc) + s[size:]
 }
