@@ -184,27 +184,21 @@ func (d *decodeState) discriminatorGetValue() (reflect.Value, error) {
 			// Assign the type instance to the outer variable, t.
 			t = ti
 
-			// If type implements Unmarshaler we want to deserialize the
-			// value field into value of type t.
-			if supportsUnmarshaler(t) {
-				// We will run the unmarshaler on the value
+			// Primitive types and types with Unmarshaler are wrapped in a
+			// structure with type and value fields. Structures and Maps not
+			// implementing Unmarshaler use discriminator embedded within their
+			// content.
+			if useNestedDiscriminator(t) {
+				// If the type is a map or a struct not implementing Unmarshaler
+				// then it is not necessary to continue walking over the current
+				// JSON object since it will be completely re-scanned to decode
+				// its value into the discovered type.
+				dd.opcode = scanEndObject
+			} else {
+				// Otherwise if the value offset has been discovered then it is
+				// safe to stop walking over the current JSON object as well.
 				if valueOff > -1 {
 					dd.opcode = scanEndObject
-				}
-			} else {
-				switch t.Kind() {
-				case reflect.Map, reflect.Struct:
-					// If the type is a map or a struct then it is not necessary to
-					// continue walking over the current JSON object since it will be
-					// completely rescanned to decode its value into the discovered
-					// type.
-					dd.opcode = scanEndObject
-				default:
-					// Otherwise if the value offset has been discovered then it is
-					// safe to stop walking over the current JSON object as well.
-					if valueOff > -1 {
-						dd.opcode = scanEndObject
-					}
 				}
 			}
 		case discriminatorOpValueField:
@@ -256,19 +250,14 @@ func (d *decodeState) discriminatorGetValue() (reflect.Value, error) {
 	// Reset the decode state to prepare for decoding the data.
 	dd.scan.reset()
 
-	if supportsUnmarshaler(t) {
-		dd.off = valueOff
+	if useNestedDiscriminator(t) {
+		// Set the offset to zero since the entire object will be decoded
+		// into v.
+		dd.off = 0
 	} else {
-		switch t.Kind() {
-		case reflect.Map, reflect.Struct:
-			// Set the offset to zero since the entire object will be decoded
-			// into v.
-			dd.off = 0
-		default:
-			// Set the offset to what it was before the discriminator value was
-			// read so only the discriminator value is decoded into v.
-			dd.off = valueOff
-		}
+		// Set the offset to what it was before the discriminator value was
+		// read so only the value field is decoded into v.
+		dd.off = valueOff
 	}
 	// This will initialize the correct scan step and op code.
 	dd.scanWhile(scanSkipSpace)
@@ -422,8 +411,16 @@ func discriminatorStructEncode(e *encodeState, v reflect.Value, opts encOpts) by
 
 var unmarshalerType = reflect.TypeOf((*Unmarshaler)(nil)).Elem()
 
-func supportsUnmarshaler(t reflect.Type) bool {
-	return t.Implements(unmarshalerType) || reflect.PtrTo(t).Implements(unmarshalerType)
+// Discriminator is nested in map and struct unless they implement Unmarshaler.
+func useNestedDiscriminator(t reflect.Type) bool {
+	if t.Implements(unmarshalerType) || reflect.PtrTo(t).Implements(unmarshalerType) {
+		return false
+	}
+	kind := t.Kind()
+	if kind == reflect.Struct || kind == reflect.Map {
+		return true
+	}
+	return false
 }
 
 var discriminatorTypeRegistry = map[string]reflect.Type{

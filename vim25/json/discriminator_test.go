@@ -87,6 +87,24 @@ func (d *DS9) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Struct implementing UnmarshalJSON with value receiver.
+type DS10 struct {
+	DS9 *DS9
+}
+
+func (d DS10) UnmarshalJSON(b []byte) error {
+	if d.DS9 == nil {
+		return nil
+	}
+	return d.DS9.UnmarshalJSON(b)
+}
+func (d DS10) MarshalJSON() ([]byte, error) {
+	if d.DS9 == nil {
+		return []byte("null"), nil
+	}
+	return d.DS9.MarshalJSON()
+}
+
 type HexInt64 int64
 
 func (i HexInt64) MarshalJSON() ([]byte, error) {
@@ -179,6 +197,9 @@ var discriminatorTests = []struct {
 	{obj: DS9{F1: 42}, str: `{"_t":"DS9","_v":42}`, mode: json.DiscriminatorEncodeTypeNameRootValue},
 	{obj: DS6{F1: DS9{F1: 42}}, str: `{"f1":{"_t":"DS9","_v":42}}`},
 	{obj: DS9{F1: 42}, str: `42`},
+
+	{obj: DS10{DS9: &DS9{F1: 42}}, str: `42`},
+	{obj: DS6{F1: DS10{DS9: &DS9{F1: 42}}}, str: `{"f1":{"_t":"DS10","_v":42}}`, expObj: DS6{F1: DS10{DS9: nil}}},
 
 	// primitive values stored in interface with 0 methods
 	{obj: DS1{F1: uint(1)}, str: `{"f1":{"_t":"uint","_v":1}}`},
@@ -402,6 +423,8 @@ func discriminatorToTypeFn(discriminator string) (reflect.Type, bool) {
 		return reflect.TypeOf(DS8{}), true
 	case "DS9":
 		return reflect.TypeOf(DS9{}), true
+	case "DS10":
+		return reflect.TypeOf(DS10{}), true
 	case "uintNoop":
 		return reflect.TypeOf(uintNoop(0)), true
 	case "uint8Noop":
@@ -548,6 +571,11 @@ func testDiscriminatorDecode(t *testing.T) {
 					obj = o
 				case "DS9":
 					var o DS9
+					err = dec.Decode(&o)
+					obj = o
+				case "DS10":
+					var o DS10
+					o.DS9 = &DS9{}
 					err = dec.Decode(&o)
 					obj = o
 				default:
@@ -782,63 +810,8 @@ func addrOfArrayOfTwoIntsNoop(v arrayOfTwoIntsNoop) *arrayOfTwoIntsNoop {
 	return &v
 }
 
-func assertEqual(t *testing.T, a, b interface{}) {
-	if a == nil && b == nil {
-		return
-	}
-	if a == nil {
-		t.Fatalf("a is nil, b is %T, %+v", b, b)
-		return
-	}
-	if b == nil {
-		t.Fatalf("b is nil, a is %T, %+v", a, a)
-		return
-	}
-
-	// t.Logf("a=%[1]T %+[1]v, b=%[2]T %+[2]v", a, b)
-
-	var (
-		ok bool
-		va reflect.Value
-		vb reflect.Value
-	)
-
-	if va, ok = a.(reflect.Value); ok {
-		a = va.Interface()
-	} else {
-		va = reflect.ValueOf(a)
-	}
-	if vb, ok = b.(reflect.Value); ok {
-		b = vb.Interface()
-	} else {
-		vb = reflect.ValueOf(b)
-	}
-
-	if vat, vab := va.Type(), vb.Type(); vat != vab {
-		t.Fatalf("type of a (%s) != type of b (%s)", vat, vab)
-		return
-	}
-
-	switch va.Kind() {
-	case reflect.Ptr, reflect.Interface:
-		assertEqual(t, va.Elem(), vb.Elem())
-	case reflect.Array, reflect.Slice:
-		for i := 0; i < va.Len(); i++ {
-			ai, bi := va.Index(i), vb.Index(i)
-			assertEqual(t, ai, bi)
-		}
-	case reflect.Map:
-		for _, k := range va.MapKeys() {
-			assertEqual(t, va.MapIndex(k), vb.MapIndex(k))
-		}
-	case reflect.Struct:
-		for i := 0; i < va.NumField(); i++ {
-			f1, f2 := va.Field(i), vb.Field(i)
-			assertEqual(t, f1, f2)
-		}
-	default:
-		if a != b {
-			t.Fatalf("a != b: a=%+v, b=%+v", a, b)
-		}
+func assertEqual(t *testing.T, a, e interface{}) {
+	if !reflect.DeepEqual(a, e) {
+		t.Fatalf("Actual and expected values differ.\nactual: '%#v'\nexpected: '%#v'\n", a, e)
 	}
 }
